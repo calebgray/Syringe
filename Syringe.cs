@@ -1,7 +1,6 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 using UnityEngine;
 
 namespace SyringeInjection {
@@ -59,7 +58,7 @@ namespace SyringeInjection {
 			while (_sets.Count > 0) {
 				// Set the Value
 				_data = _sets.Dequeue();
-				_dataIsSet = !EqualityComparer<T>.Default.Equals(_data, default(T));
+				_dataIsSet = !EqualityComparer<T>.Default.Equals(_data, default);
 
 				// Trigger the list of actions and onces for this type.
 				var actions = new Action<T>[_actions.Count + _onces.Count];
@@ -102,7 +101,7 @@ namespace SyringeInjection {
 		/// <summary>Remove the last known value of <seealso cref="T"/>.</summary>
 		public static void Remove() {
 			// Remove the Value
-			Set(default(T));
+			Set(default);
 		}
 
 		/// <summary>Reset <seealso cref="T"/>.</summary>
@@ -254,29 +253,35 @@ namespace SyringeInjection {
 			return new Syringe(type);
 		}
 
-		public string FullName {
-			get { return _type == null ? null : _type.FullName; }
-		}
-
-		public string FriendlyName {
-			get { return FullName == null ? null : FullName.Substring(FullName.LastIndexOf('.') + 1); }
-		}
+		// Easy Access to Underlying Type
+		public string FullName => _type == null ? null : _type.FullName;
+		public string FriendlyName => FullName == null ? null : FullName.Substring(FullName.LastIndexOf('.') + 1);
+		public Type Type => _type;
 		/******************************************************************************************************************/
 
 		/******************************************************************************************************************/
 		// Serialization Implementations
 		/******************************************************************************************************************/
-		// Implementation Pointers (Static or Runtime)
-		private Action<Action<object>, bool> _subscribe;
-		private Action<Action<object>, bool> _once;
-		public Action<Action<object>> Unsubscribe { get; private set; }
-		public Action Fire { get; private set; }
-		public Action<object> Set { get; private set; }
-		public Action<Func<object, bool, object>> Update { get; private set; }
-		public Func<bool> HasValue { get; private set; }
-		public Func<object> Get { get; private set; }
-		public Func<bool> Remove { get; private set; }
-		public Action Reset { get; private set; }
+		public delegate void SubscribeMethod(Action<object> action, bool getValueNow = true);
+		public SubscribeMethod Subscribe;
+		public delegate void OnceMethod(Action<object> action, bool getValueNow = true);
+		public OnceMethod Once;
+		public delegate void UnsubscribeMethod(Action<object> action);
+		public UnsubscribeMethod Unsubscribe;
+		public delegate void FireMethod();
+		public FireMethod Fire;
+		public delegate void SetMethod(object value);
+		public SetMethod Set;
+		/*public delegate void UpdateMethod(Func<object, bool, object> getAndSet);
+		public UpdateMethod Update;*/
+		public delegate bool HasValueMethod();
+		public HasValueMethod HasValue;
+		public delegate object GetMethod();
+		public GetMethod Get;
+		public delegate void RemoveMethod();
+		public RemoveMethod Remove;
+		public delegate void ResetMethod();
+		public ResetMethod Reset;
 
 		/// <inheritdoc />
 		public void OnBeforeSerialize() {
@@ -296,126 +301,33 @@ namespace SyringeInjection {
 				_type = Type.GetType(_typeAssemblyQualifiedName);
 				if (_type == null) return;
 
-				// (Attempt to) Cache Reflections
+				// (Attempt to) Cache Runtime Reflections
 				var staticSyringeType = typeof(Syringe<>).MakeGenericType(_type);
-				_staticActionType = typeof(Action<>).MakeGenericType(_type);
-				_staticUpdateType = typeof(Func<,,>).MakeGenericType(_type, typeof(bool), _type);
-				_staticMethodSubscribe = staticSyringeType.GetMethod("Subscribe");
-				_staticMethodOnce = staticSyringeType.GetMethod("Once");
-				_staticMethodUnsubscribe = staticSyringeType.GetMethod("Unsubscribe");
-				_staticMethodFire = staticSyringeType.GetMethod("Fire");
-				_staticMethodSet = staticSyringeType.GetMethod("Set");
-				_staticMethodUpdate = staticSyringeType.GetMethod("Update");
-				_staticMethodHasValue = staticSyringeType.GetMethod("HasValue");
-				_staticMethodGet = staticSyringeType.GetMethod("Get");
-				_staticMethodRemove = staticSyringeType.GetMethod("Remove");
-				_staticMethodReset = staticSyringeType.GetMethod("Reset");
-				_subscribe = StaticSubscribe;
-				_once = StaticOnce;
-				Unsubscribe = StaticUnsubscribe;
-				Fire = StaticFire;
-				Set = StaticSet;
-				Update = StaticUpdate;
-				HasValue = StaticHasValue;
-				Get = StaticGet;
-				Remove = StaticRemove;
-				Reset = StaticReset;
-			} catch (Exception e) {
-				Debug.LogException(e);
-				_subscribe = RuntimeSubscribe;
-				_once = RuntimeOnce;
+				Subscribe = (SubscribeMethod) Delegate.CreateDelegate(typeof(SubscribeMethod), staticSyringeType.GetMethod("Subscribe"));
+				Once = (OnceMethod) Delegate.CreateDelegate(typeof(OnceMethod), staticSyringeType.GetMethod("Once"));
+				Unsubscribe = (UnsubscribeMethod) Delegate.CreateDelegate(typeof(UnsubscribeMethod), staticSyringeType.GetMethod("Unsubscribe"));
+				Fire = (FireMethod) Delegate.CreateDelegate(typeof(FireMethod), staticSyringeType.GetMethod("Fire"));
+				// TODO: Is there a better way to cast T -> object than this?
+				var set = staticSyringeType.GetMethod("Set");
+				Set = value => set.Invoke(null, new[]{ value });
+				//Update = (UpdateMethod) Delegate.CreateDelegate(typeof(UpdateMethod), staticSyringeType.GetMethod("HasValue"));
+				HasValue = (HasValueMethod) Delegate.CreateDelegate(typeof(HasValueMethod), staticSyringeType.GetMethod("HasValue"));
+				Get = (GetMethod) Delegate.CreateDelegate(typeof(GetMethod), staticSyringeType.GetMethod("Get"));
+				Remove = (RemoveMethod) Delegate.CreateDelegate(typeof(RemoveMethod), staticSyringeType.GetMethod("Remove"));
+				Reset = (ResetMethod) Delegate.CreateDelegate(typeof(ResetMethod), staticSyringeType.GetMethod("Reset"));
+			} catch (Exception) {
+				// (Fallback to) Runtime Version
+				Subscribe = RuntimeSubscribe;
+				Once = RuntimeOnce;
 				Unsubscribe = RuntimeUnsubscribe;
 				Fire = RuntimeFire;
 				Set = RuntimeSet;
-				Update = RuntimeUpdate;
+				//Update = RuntimeUpdate;
 				HasValue = RuntimeHasValue;
 				Get = RuntimeGet;
 				Remove = RuntimeRemove;
 				Reset = RuntimeReset;
 			}
-		}
-		/******************************************************************************************************************/
-
-		/******************************************************************************************************************/
-		// Method Overload Helpers
-		/******************************************************************************************************************/
-		/// <summary>Fire <paramref name="action"/> every time <seealso cref="Set(T)"/> is called.</summary>
-		public void Subscribe(Action<object> action, bool getValueNow = true) {
-			_subscribe(action, getValueNow);
-		}
-
-		/// <summary>Fire <paramref name="action"/> the next time, and only the next time, <seealso cref="Set(T)"/> is called... Unless <paramref name="getValueNow"/> is true, then execute right now.</summary>
-		public void Once(Action<object> action, bool getValueNow = true) {
-			_once(action, getValueNow);
-		}
-		/******************************************************************************************************************/
-
-		/******************************************************************************************************************/
-		// Mixed Static/Runtime Implementations
-		/******************************************************************************************************************/
-		// Reflection Cache
-		private Type _staticActionType;
-		private Type _staticUpdateType;
-		private MethodInfo _staticMethodSubscribe;
-		private MethodInfo _staticMethodOnce;
-		private MethodInfo _staticMethodUnsubscribe;
-		private MethodInfo _staticMethodFire;
-		private MethodInfo _staticMethodSet;
-		private MethodInfo _staticMethodUpdate;
-		private MethodInfo _staticMethodHasValue;
-		private MethodInfo _staticMethodGet;
-		private MethodInfo _staticMethodRemove;
-		private MethodInfo _staticMethodReset;
-
-		/// <summary>Fire <paramref name="action"/> every time <seealso cref="Set"/> is called.</summary>
-		private void StaticSubscribe(Action<object> action, bool getValueNow = true) {
-			_staticMethodSubscribe.Invoke(null, new[] { (object) Delegate.CreateDelegate(_staticActionType, action.Target, action.Method), (object) getValueNow });
-		}
-
-		/// <summary>Fire <paramref name="action"/> the next time, and only the next time, <seealso cref="Set"/> is called... Unless <paramref name="getValueNow"/> is true, then execute right now.</summary>
-		private void StaticOnce(Action<object> action, bool getValueNow = true) {
-			_staticMethodOnce.Invoke(null, new[] { (object) Delegate.CreateDelegate(_staticActionType, action.Target, action.Method), (object) getValueNow });
-		}
-
-		/// <summary>Remove <paramref name="action"/>.</summary>
-		private void StaticUnsubscribe(Action<object> action) {
-			_staticMethodUnsubscribe.Invoke(null, new[] { (object) Delegate.CreateDelegate(_staticActionType, action.Target, action.Method) });
-		}
-
-		/// <summary>Convenience method for calling Set(Get()) <seealso cref="T"/>.</summary>
-		private void StaticFire() {
-			_staticMethodFire.Invoke(null, null);
-		}
-
-		/// <summary>Set and store a value.</summary>
-		private void StaticSet(object value) {
-			_staticMethodSet.Invoke(null, new[] { (object) value });
-		}
-
-		/// <summary>Update the value of <seealso cref="T"/>.</summary>
-		/// <param name="getAndSet">Execute <paramref name="getAndSet"/> with the value of <seealso cref="T"/> and the <see cref="HasValue"/> result. Returns the updated value.</param>
-		private void StaticUpdate(Func<object, bool, object> getAndSet) {
-			_staticMethodUpdate.Invoke(null, new[] { (object) Delegate.CreateDelegate(_staticUpdateType, getAndSet.Target, getAndSet.Method) });
-		}
-
-		/// <summary>Get the last state.</summary>
-		private bool StaticHasValue() {
-			return (bool) _staticMethodHasValue.Invoke(null, null);
-		}
-
-		/// <summary>Get the last known value.</summary>
-		private object StaticGet() {
-			return _staticMethodGet.Invoke(null, null);
-		}
-
-		/// <summary>Remove the last known value.</summary>
-		private bool StaticRemove() {
-			return (bool) _staticMethodRemove.Invoke(null, null);
-		}
-
-		/// <summary>Reset actions and value.</summary>
-		private void StaticReset() {
-			_staticMethodReset.Invoke(null, null);
 		}
 		/******************************************************************************************************************/
 
@@ -476,8 +388,7 @@ namespace SyringeInjection {
 		/// <summary>Set and store the value of <seealso cref="T"/>.</summary>
 		private void RuntimeSet(object value) {
 			// Add Set to the Queue
-			Queue<object> sets;
-			if (!_sets.TryGetValue(_type, out sets)) {
+			if (!_sets.TryGetValue(_type, out var sets)) {
 				sets = new Queue<object>();
 				_sets[_type] = sets;
 			}
@@ -488,6 +399,8 @@ namespace SyringeInjection {
 
 			// Execute Sets (fifo)
 			Exception firstException = null;
+			string firstExceptionName = null;
+			int exceptionCounter = 0;
 			while (sets.Count > 0) {
 				// Set the Value
 				value = sets.Dequeue();
@@ -498,9 +411,8 @@ namespace SyringeInjection {
 				}
 
 				// Get the list of actions for this type.
-				HashSet<Action<object>> actionList = null;
 				HashSet<Action<object>> onceList = null;
-				if (!_actions.TryGetValue(_type, out actionList) && !_onces.TryGetValue(_type, out onceList)) {
+				if (!_actions.TryGetValue(_type, out var actionList) && !_onces.TryGetValue(_type, out onceList)) {
 					// Nothing to do?
 					sets.Clear();
 					return;
@@ -517,22 +429,23 @@ namespace SyringeInjection {
 					try {
 						action(value);
 					} catch (Exception e) {
+						++exceptionCounter;
 						if (firstException == null) {
-							firstException = new Exception(action.Method.DeclaringType.FullName + "." + action.Method.Name, e);
+							firstExceptionName = $"{action.Method.DeclaringType.FullName}.{action.Method.Name}";
+							firstException = e;
 						}
 					}
 				}
 			}
-			sets.Clear();
-			if (firstException != null) throw firstException;
+			if (firstException != null) throw new Exception($"Encountered {exceptionCounter} Exceptions! Only Throwing the First Exception: {firstExceptionName}", firstException);
 		}
 
-		/// <summary>Update the value of <seealso cref="T"/>.</summary>
+		/*/// <summary>Update the value of <seealso cref="T"/>.</summary>
 		/// <param name="getAndSet">Execute <paramref name="getAndSet"/> with the value of <seealso cref="T"/> and the <see cref="HasValue"/> result. Returns the updated value.</param>
 		private void RuntimeUpdate(Func<object, bool, object> getAndSet) {
 			// Add/Overwrite Value
 			RuntimeSet(getAndSet(RuntimeGet(), RuntimeHasValue()));
-		}
+		}*/
 
 		/// <summary>Get the state of <seealso cref="T"/>.</summary>
 		private bool RuntimeHasValue() {			
@@ -543,21 +456,17 @@ namespace SyringeInjection {
 		/// <summary>Get the last known value of <seealso cref="T"/>.</summary>
 		private object RuntimeGet() {			
 			// Return the Value
-			object value;
-			_data.TryGetValue(_type, out value);
+			_data.TryGetValue(_type, out var value);
 			return value;
 		}
 
 		/// <summary>Remove the last known value of <seealso cref="T"/>.</summary>
-		private bool RuntimeRemove() {
+		private void RuntimeRemove() {
 			// Remove the Value
-			var removed = _data.Remove(_type);
+			_data.Remove(_type);
 
 			// Broadcast the Removed Value
 			RuntimeSet(null);
-
-			// Return the Status
-			return removed;
 		}
 
 		/// <summary>Reset <seealso cref="T"/>.</summary>
